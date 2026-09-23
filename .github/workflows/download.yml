@@ -47,7 +47,7 @@ jobs:
             exit 1
           fi
 
-      - name: Download YouTube audio
+      - name: Get YouTube information
         env:
           VIDEO_URL: ${{ github.event.inputs.video_url || github.event.client_payload.url }}
         run: |
@@ -56,6 +56,30 @@ jobs:
             exit 1
           fi
 
+          yt-dlp \
+            --cookies youtube_cookies.txt \
+            --no-playlist \
+            --print "%(title)s" \
+            --print "%(uploader)s" \
+            --print "%(thumbnail)s" \
+            --skip-download \
+            "$VIDEO_URL" > video_info.txt
+
+          echo "YouTube information:"
+          cat video_info.txt
+
+          TITLE=$(sed -n '1p' video_info.txt)
+          ARTIST=$(sed -n '2p' video_info.txt)
+          THUMBNAIL=$(sed -n '3p' video_info.txt)
+
+          echo "TITLE=$TITLE" >> "$GITHUB_ENV"
+          echo "ARTIST=$ARTIST" >> "$GITHUB_ENV"
+          echo "THUMBNAIL=$THUMBNAIL" >> "$GITHUB_ENV"
+
+      - name: Download YouTube audio
+        env:
+          VIDEO_URL: ${{ github.event.inputs.video_url || github.event.client_payload.url }}
+        run: |
           mkdir -p output
 
           yt-dlp \
@@ -64,10 +88,64 @@ jobs:
             --extract-audio \
             --audio-format mp3 \
             --audio-quality 96K \
-            --embed-thumbnail \
-            --add-metadata \
             --output "output/audio.%(ext)s" \
             "$VIDEO_URL"
+
+      - name: Download artwork
+        run: |
+          if [ -z "$THUMBNAIL" ]; then
+            echo "No thumbnail URL found."
+            exit 1
+          fi
+
+          echo "Downloading artwork..."
+
+          curl -L \
+            --fail \
+            --retry 3 \
+            --connect-timeout 20 \
+            --max-time 120 \
+            "$THUMBNAIL" \
+            -o output/cover.jpg
+
+          if [ ! -s output/cover.jpg ]; then
+            echo "Artwork download failed."
+            exit 1
+          fi
+
+          echo "Artwork downloaded:"
+          ls -lh output/cover.jpg
+
+      - name: Add MP3 metadata and artwork
+        run: |
+          if [ ! -f "output/audio.mp3" ]; then
+            echo "MP3 was not created."
+            exit 1
+          fi
+
+          echo "Adding metadata..."
+
+          ffmpeg \
+            -y \
+            -i "output/audio.mp3" \
+            -i "output/cover.jpg" \
+            -map 0:a \
+            -map 1:v \
+            -c:a copy \
+            -c:v mjpeg \
+            -id3v2_version 3 \
+            -metadata title="$TITLE" \
+            -metadata artist="$ARTIST" \
+            -metadata album="$ARTIST" \
+            -metadata album_artist="$ARTIST" \
+            -metadata comment="YouTube" \
+            -metadata:s:v title="Album cover" \
+            -metadata:s:v comment="Cover (front)" \
+            "output/final.mp3"
+
+          mv output/final.mp3 output/audio.mp3
+
+          echo "Metadata added successfully."
 
       - name: Check MP3
         run: |
@@ -86,6 +164,13 @@ jobs:
           echo "MP3 information:"
           file "$FILE"
 
+          echo "Metadata:"
+          ffprobe \
+            -v quiet \
+            -show_entries format_tags=title,artist,album,album_artist \
+            -of default=noprint_wrappers=1 \
+            "$FILE"
+
       - name: Check Telegram upload size
         run: |
           FILE="output/audio.mp3"
@@ -95,7 +180,6 @@ jobs:
 
           echo "Final MP3 size: ${SIZE_MB} MB"
 
-          # Keep a safety limit below Telegram's upload limit.
           MAX_BYTES=$((45 * 1024 * 1024))
 
           if [ "$SIZE_BYTES" -gt "$MAX_BYTES" ]; then
