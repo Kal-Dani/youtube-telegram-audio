@@ -1,6 +1,6 @@
-name: YouTube to Telegram MP3
-
 on:
+  workflow_dispatch:
+
   repository_dispatch:
     types: [youtube_audio]
 
