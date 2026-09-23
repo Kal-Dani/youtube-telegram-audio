@@ -1,5 +1,12 @@
+name: YouTube to Telegram MP3
+
 on:
   workflow_dispatch:
+    inputs:
+      video_url:
+        description: "YouTube URL to convert"
+        required: true
+        type: string
 
   repository_dispatch:
     types: [youtube_audio]
@@ -20,7 +27,7 @@ jobs:
 
       - name: Download YouTube audio
         env:
-          VIDEO_URL: ${{ github.event.client_payload.url }}
+          VIDEO_URL: ${{ github.event.inputs.video_url || github.event.client_payload.url }}
         run: |
           mkdir -p output
 
