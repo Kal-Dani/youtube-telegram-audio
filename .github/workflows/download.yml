@@ -233,6 +233,7 @@ jobs:
           import uuid
           import urllib.request
           import urllib.error
+          import re
 
           token = os.environ["TELEGRAM_BOT_TOKEN"]
           chat_id = os.environ["TELEGRAM_CHANNEL_ID"]
@@ -242,6 +243,22 @@ jobs:
           if not os.path.isfile(file_path):
               print("ERROR: MP3 does not exist.")
               sys.exit(1)
+
+          title = os.environ.get("TITLE", "YouTube Audio")
+          artist = os.environ.get("ARTIST", "YouTube")
+
+          # Create a safe filename for Telegram
+          safe_title = re.sub(r'[\\/:*?"<>|]', '', title)
+          safe_title = safe_title.strip()
+
+          if not safe_title:
+              safe_title = "YouTube Audio"
+
+          filename = f"{safe_title}.mp3"
+
+          # Keep filename reasonably sized
+          if len(filename) > 180:
+              filename = filename[:176] + ".mp3"
 
           boundary = uuid.uuid4().hex
           boundary_bytes = boundary.encode()
@@ -256,16 +273,27 @@ jobs:
 
           body = b""
 
+          # Destination
           body += add_field("chat_id", chat_id)
 
-          body += add_field(
-              "caption",
-              "🎵 YouTube Audio"
+          # Telegram displayed title
+          body += add_field("title", title)
+
+          # Telegram displayed performer
+          body += add_field("performer", artist)
+
+          # Caption
+          caption = (
+              f"🎵 {title}\n"
+              f"👤 {artist}"
           )
 
+          body += add_field("caption", caption)
+
+          # MP3
           body += (
               b"--" + boundary_bytes + b"\r\n"
-              + b'Content-Disposition: form-data; name="audio"; filename="audio.mp3"\r\n'
+              + f'Content-Disposition: form-data; name="audio"; filename="{filename}"\r\n'.encode()
               + b"Content-Type: audio/mpeg\r\n\r\n"
           )
 
@@ -274,12 +302,16 @@ jobs:
 
           body += b"\r\n"
 
-          body += b"--" + boundary_bytes + b"--\r\n"
+          body += (
+              b"--" + boundary_bytes + b"--\r\n"
+          )
 
           url = f"https://api.telegram.org/bot{token}/sendAudio"
 
-          print("Uploading final MP3...")
-          print("The MP3 already contains its ID3 metadata and artwork.")
+          print("Uploading MP3 to Telegram...")
+          print(f"Title: {title}")
+          print(f"Artist: {artist}")
+          print(f"Filename: {filename}")
 
           request = urllib.request.Request(
               url,
@@ -307,7 +339,8 @@ jobs:
                       print("ERROR: Telegram rejected the upload.")
                       sys.exit(1)
 
-                  print("SUCCESS: MP3 sent to Telegram!")
+                  print("SUCCESS!")
+                  print("Telegram received the titled MP3.")
 
           except urllib.error.HTTPError as e:
               error_body = e.read().decode(
