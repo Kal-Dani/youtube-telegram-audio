@@ -91,61 +91,104 @@ jobs:
             --output "output/audio.%(ext)s" \
             "$VIDEO_URL"
 
-      - name: Download artwork
+      - name: Download YouTube artwork
         run: |
-          if [ -z "$THUMBNAIL" ]; then
-            echo "No thumbnail URL found."
-            exit 1
-          fi
+          echo "Downloading YouTube artwork..."
 
-          echo "Downloading artwork..."
-
-          curl -L \
+          curl \
+            -L \
             --fail \
             --retry 3 \
             --connect-timeout 20 \
             --max-time 120 \
             "$THUMBNAIL" \
-            -o output/cover.jpg
+            -o output/original_cover.jpg
 
-          if [ ! -s output/cover.jpg ]; then
+          if [ ! -s output/original_cover.jpg ]; then
             echo "Artwork download failed."
             exit 1
           fi
 
           echo "Artwork downloaded:"
-          ls -lh output/cover.jpg
+          ls -lh output/original_cover.jpg
 
-      - name: Add MP3 metadata and artwork
+      - name: Prepare album artwork
         run: |
-          if [ ! -f "output/audio.mp3" ]; then
-            echo "MP3 was not created."
-            exit 1
-          fi
-
-          echo "Adding metadata..."
+          echo "Preparing artwork for ID3..."
 
           ffmpeg \
             -y \
-            -i "output/audio.mp3" \
-            -i "output/cover.jpg" \
-            -map 0:a \
-            -map 1:v \
+            -i output/original_cover.jpg \
+            -vf "scale=1000:1000:force_original_aspect_ratio=decrease,pad=1000:1000:(ow-iw)/2:(oh-ih)/2" \
+            -q:v 2 \
+            output/cover.jpg
+
+          if [ ! -s output/cover.jpg ]; then
+            echo "Failed to create cover."
+            exit 1
+          fi
+
+          echo "Final artwork:"
+          ls -lh output/cover.jpg
+
+      - name: Embed ID3 metadata and artwork
+        run: |
+          echo "Creating final MP3..."
+
+          ffmpeg \
+            -y \
+            -i output/audio.mp3 \
+            -i output/cover.jpg \
+            -map 0:a:0 \
+            -map 1:v:0 \
             -c:a copy \
             -c:v mjpeg \
             -id3v2_version 3 \
-            -metadata title="$TITLE" \
-            -metadata artist="$ARTIST" \
-            -metadata album="$ARTIST" \
-            -metadata album_artist="$ARTIST" \
-            -metadata comment="YouTube" \
-            -metadata:s:v title="Album cover" \
-            -metadata:s:v comment="Cover (front)" \
-            "output/final.mp3"
+            -write_id3v1 1 \
+            -metadata "title=$TITLE" \
+            -metadata "artist=$ARTIST" \
+            -metadata "album=$ARTIST" \
+            -metadata "album_artist=$ARTIST" \
+            -metadata "comment=Downloaded from YouTube" \
+            -metadata:s:v "title=Album cover" \
+            -metadata:s:v "comment=Cover (front)" \
+            output/final.mp3
 
           mv output/final.mp3 output/audio.mp3
 
-          echo "Metadata added successfully."
+          echo "Final MP3 created."
+
+      - name: Verify MP3 metadata
+        run: |
+          echo "=============================="
+          echo "VERIFYING FINAL MP3"
+          echo "=============================="
+
+          ffprobe \
+            -hide_banner \
+            -loglevel error \
+            -show_entries format_tags=title,artist,album,album_artist,comment \
+            -show_entries stream=index,codec_name,codec_type:stream_tags=title,comment \
+            -of default=noprint_wrappers=1 \
+            output/audio.mp3
+
+          echo "=============================="
+          echo "Checking for embedded artwork"
+          echo "=============================="
+
+          COVER_CHECK=$(ffprobe \
+            -v error \
+            -select_streams v \
+            -show_entries stream=codec_name \
+            -of default=noprint_wrappers=1:nokey=1 \
+            output/audio.mp3)
+
+          if [ -z "$COVER_CHECK" ]; then
+            echo "ERROR: No embedded artwork was found."
+            exit 1
+          fi
+
+          echo "Embedded artwork detected: $COVER_CHECK"
 
       - name: Check MP3
         run: |
@@ -153,39 +196,27 @@ jobs:
 
           if [ ! -f "$FILE" ]; then
             echo "MP3 was not created."
-            echo "Files in output:"
-            ls -lah output
             exit 1
           fi
 
-          echo "MP3 found:"
+          echo "Final MP3:"
           ls -lh "$FILE"
-
-          echo "MP3 information:"
-          file "$FILE"
-
-          echo "Metadata:"
-          ffprobe \
-            -v quiet \
-            -show_entries format_tags=title,artist,album,album_artist \
-            -of default=noprint_wrappers=1 \
-            "$FILE"
-
-      - name: Check Telegram upload size
-        run: |
-          FILE="output/audio.mp3"
 
           SIZE_BYTES=$(stat -c%s "$FILE")
           SIZE_MB=$(awk "BEGIN {printf \"%.2f\", $SIZE_BYTES / 1024 / 1024}")
 
           echo "Final MP3 size: ${SIZE_MB} MB"
 
+      - name: Check Telegram upload size
+        run: |
+          FILE="output/audio.mp3"
+
+          SIZE_BYTES=$(stat -c%s "$FILE")
           MAX_BYTES=$((45 * 1024 * 1024))
 
           if [ "$SIZE_BYTES" -gt "$MAX_BYTES" ]; then
-            echo "ERROR: MP3 is still too large for our safety limit."
-            echo "Size: ${SIZE_MB} MB"
-            echo "Please use a lower bitrate."
+            echo "ERROR: MP3 is too large."
+            echo "Size: $SIZE_BYTES bytes"
             exit 1
           fi
 
@@ -209,13 +240,8 @@ jobs:
           file_path = "output/audio.mp3"
 
           if not os.path.isfile(file_path):
-              print(f"ERROR: File does not exist: {file_path}")
+              print("ERROR: MP3 does not exist.")
               sys.exit(1)
-
-          file_size = os.path.getsize(file_path)
-
-          print(f"Uploading: {file_path}")
-          print(f"File size: {file_size / (1024 * 1024):.2f} MB")
 
           boundary = uuid.uuid4().hex
           boundary_bytes = boundary.encode()
@@ -228,36 +254,32 @@ jobs:
                   + b"\r\n"
               )
 
-          body_start = b""
+          body = b""
 
-          body_start += add_field("chat_id", chat_id)
+          body += add_field("chat_id", chat_id)
 
-          body_start += add_field(
+          body += add_field(
               "caption",
               "🎵 YouTube Audio"
           )
 
-          filename = os.path.basename(file_path)
-
-          body_start += (
+          body += (
               b"--" + boundary_bytes + b"\r\n"
-              + f'Content-Disposition: form-data; name="audio"; filename="{filename}"\r\n'.encode()
+              + b'Content-Disposition: form-data; name="audio"; filename="audio.mp3"\r\n'
               + b"Content-Type: audio/mpeg\r\n\r\n"
           )
 
-          body_end = (
-              b"\r\n--" + boundary_bytes + b"--\r\n"
-          )
+          with open(file_path, "rb") as f:
+              body += f.read()
+
+          body += b"\r\n"
+
+          body += b"--" + boundary_bytes + b"--\r\n"
 
           url = f"https://api.telegram.org/bot{token}/sendAudio"
 
-          print("Connecting to Telegram...")
-          print("Uploading MP3...")
-
-          with open(file_path, "rb") as f:
-              file_data = f.read()
-
-          body = body_start + file_data + body_end
+          print("Uploading final MP3...")
+          print("The MP3 already contains its ID3 metadata and artwork.")
 
           request = urllib.request.Request(
               url,
@@ -282,7 +304,7 @@ jobs:
                   print(result)
 
                   if '"ok":true' not in result:
-                      print("ERROR: Telegram did not accept the upload.")
+                      print("ERROR: Telegram rejected the upload.")
                       sys.exit(1)
 
                   print("SUCCESS: MP3 sent to Telegram!")
