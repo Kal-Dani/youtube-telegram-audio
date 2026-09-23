@@ -63,7 +63,7 @@ jobs:
             --no-playlist \
             --extract-audio \
             --audio-format mp3 \
-            --audio-quality 192K \
+            --audio-quality 96K \
             --embed-thumbnail \
             --add-metadata \
             --output "output/audio.%(ext)s" \
@@ -86,6 +86,27 @@ jobs:
           echo "MP3 information:"
           file "$FILE"
 
+      - name: Check Telegram upload size
+        run: |
+          FILE="output/audio.mp3"
+
+          SIZE_BYTES=$(stat -c%s "$FILE")
+          SIZE_MB=$(awk "BEGIN {printf \"%.2f\", $SIZE_BYTES / 1024 / 1024}")
+
+          echo "Final MP3 size: ${SIZE_MB} MB"
+
+          # Keep a safety limit below Telegram's upload limit.
+          MAX_BYTES=$((45 * 1024 * 1024))
+
+          if [ "$SIZE_BYTES" -gt "$MAX_BYTES" ]; then
+            echo "ERROR: MP3 is still too large for our safety limit."
+            echo "Size: ${SIZE_MB} MB"
+            echo "Please use a lower bitrate."
+            exit 1
+          fi
+
+          echo "File size is safe for Telegram."
+
       - name: Send MP3 to Telegram
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -95,7 +116,6 @@ jobs:
           import os
           import sys
           import uuid
-          import mimetypes
           import urllib.request
           import urllib.error
 
@@ -126,13 +146,13 @@ jobs:
 
           body_start = b""
 
-          # chat_id
           body_start += add_field("chat_id", chat_id)
 
-          # caption
-          body_start += add_field("caption", "🎵 YouTube Audio")
+          body_start += add_field(
+              "caption",
+              "🎵 YouTube Audio"
+          )
 
-          # audio file header
           filename = os.path.basename(file_path)
 
           body_start += (
@@ -167,7 +187,11 @@ jobs:
           )
 
           try:
-              with urllib.request.urlopen(request, timeout=600) as response:
+              with urllib.request.urlopen(
+                  request,
+                  timeout=600
+              ) as response:
+
                   result = response.read().decode("utf-8")
 
                   print("Telegram response:")
@@ -180,7 +204,10 @@ jobs:
                   print("SUCCESS: MP3 sent to Telegram!")
 
           except urllib.error.HTTPError as e:
-              error_body = e.read().decode("utf-8", errors="replace")
+              error_body = e.read().decode(
+                  "utf-8",
+                  errors="replace"
+              )
 
               print("Telegram HTTP error:")
               print(f"Status: {e.code}")
