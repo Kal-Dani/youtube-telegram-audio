@@ -35,7 +35,7 @@ jobs:
           YOUTUBE_COOKIES_B64: ${{ secrets.YOUTUBE_COOKIES }}
         run: |
           if [ -z "$YOUTUBE_COOKIES_B64" ]; then
-            echo "YOUTUBE_COOKIES secret is missing."
+            echo "YouTube cookies secret is missing."
             exit 1
           fi
 
@@ -225,7 +225,15 @@ jobs:
       - name: Send MP3 to Telegram
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+
+          # For automatic Telegram triggers:
+          # send the MP3 back to the chat/channel that
+          # originally contained the YouTube link.
+          #
+          # For manual workflow runs:
+          # fall back to TELEGRAM_CHANNEL_ID.
+          TELEGRAM_CHANNEL_ID: ${{ github.event.client_payload.chat_id || secrets.TELEGRAM_CHANNEL_ID }}
+
         run: |
           python3 <<'PY'
           import os
@@ -242,6 +250,10 @@ jobs:
 
           if not os.path.isfile(file_path):
               print("ERROR: MP3 does not exist.")
+              sys.exit(1)
+
+          if not chat_id:
+              print("ERROR: No Telegram destination was provided.")
               sys.exit(1)
 
           title = os.environ.get("TITLE", "YouTube Audio")
@@ -309,6 +321,7 @@ jobs:
           url = f"https://api.telegram.org/bot{token}/sendAudio"
 
           print("Uploading MP3 to Telegram...")
+          print(f"Destination chat: {chat_id}")
           print(f"Title: {title}")
           print(f"Artist: {artist}")
           print(f"Filename: {filename}")
