@@ -34,13 +34,28 @@ jobs:
         env:
           YOUTUBE_COOKIES_B64: ${{ secrets.YOUTUBE_COOKIES }}
         run: |
+          if [ -z "$YOUTUBE_COOKIES_B64" ]; then
+            echo "YOUTUBE_COOKIES secret is missing."
+            exit 1
+          fi
+
           echo "$YOUTUBE_COOKIES_B64" | base64 --decode > youtube_cookies.txt
           chmod 600 youtube_cookies.txt
+
+          if [ ! -s youtube_cookies.txt ]; then
+            echo "Cookie file is empty."
+            exit 1
+          fi
 
       - name: Download YouTube audio
         env:
           VIDEO_URL: ${{ github.event.inputs.video_url || github.event.client_payload.url }}
         run: |
+          if [ -z "$VIDEO_URL" ]; then
+            echo "No YouTube URL was provided."
+            exit 1
+          fi
+
           mkdir -p output
 
           yt-dlp \
@@ -51,18 +66,23 @@ jobs:
             --audio-quality 192K \
             --embed-thumbnail \
             --add-metadata \
-            --output "output/%(title)s.%(ext)s" \
+            --output "output/audio.%(ext)s" \
             "$VIDEO_URL"
 
-      - name: Find MP3
+      - name: Check MP3
         id: findmp3
         run: |
-          FILE=$(find output -type f -name "*.mp3" | head -n 1)
+          FILE="output/audio.mp3"
 
-          if [ -z "$FILE" ]; then
-            echo "No MP3 was created."
+          if [ ! -f "$FILE" ]; then
+            echo "MP3 was not created."
+            echo "Files in output:"
+            ls -lah output
             exit 1
           fi
+
+          echo "MP3 found:"
+          ls -lh "$FILE"
 
           echo "file=$FILE" >> "$GITHUB_OUTPUT"
 
@@ -72,6 +92,13 @@ jobs:
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
           MP3_FILE: ${{ steps.findmp3.outputs.file }}
         run: |
+          if [ ! -f "$MP3_FILE" ]; then
+            echo "MP3 file does not exist: $MP3_FILE"
+            exit 1
+          fi
+
+          echo "Sending $MP3_FILE to Telegram..."
+
           curl -sS \
             -X POST \
             "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendAudio" \
