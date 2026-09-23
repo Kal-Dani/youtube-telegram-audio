@@ -90,21 +90,33 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
-          MP3_FILE: ${{ steps.findmp3.outputs.file }}
         run: |
-          if [ ! -f "$MP3_FILE" ]; then
-            echo "MP3 file does not exist: $MP3_FILE"
+          FILE="output/audio.mp3"
+
+          if [ ! -f "$FILE" ]; then
+            echo "MP3 file does not exist: $FILE"
+            ls -lah output
             exit 1
           fi
 
-          echo "Sending $MP3_FILE to Telegram..."
+          chmod 644 "$FILE"
 
-          curl -sS \
+          echo "MP3 details:"
+          ls -lh "$FILE"
+          file "$FILE"
+
+          echo "Sending $FILE to Telegram..."
+
+          RESPONSE=$(curl -sS \
+            --fail-with-body \
             -X POST \
             "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendAudio" \
             -F "chat_id=${TELEGRAM_CHANNEL_ID}" \
-            -F "audio=@${MP3_FILE}" \
-            -F "caption=🎵 YouTube Audio"
+            -F "audio=@${FILE};type=audio/mpeg" \
+            -F "caption=🎵 YouTube Audio")
+
+          echo "Telegram response:"
+          echo "$RESPONSE"
 
       - name: Delete cookies
         if: always()
