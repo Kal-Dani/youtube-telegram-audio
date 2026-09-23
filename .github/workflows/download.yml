@@ -30,6 +30,13 @@ jobs:
           curl -fsSL https://deno.land/install.sh | sh
           echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
 
+      - name: Restore YouTube cookies
+        env:
+          YOUTUBE_COOKIES_B64: ${{ secrets.YOUTUBE_COOKIES }}
+        run: |
+          echo "$YOUTUBE_COOKIES_B64" | base64 --decode > youtube_cookies.txt
+          chmod 600 youtube_cookies.txt
+
       - name: Download YouTube audio
         env:
           VIDEO_URL: ${{ github.event.inputs.video_url || github.event.client_payload.url }}
@@ -37,6 +44,7 @@ jobs:
           mkdir -p output
 
           yt-dlp \
+            --cookies youtube_cookies.txt \
             --no-playlist \
             --extract-audio \
             --audio-format mp3 \
@@ -70,3 +78,8 @@ jobs:
             -F "chat_id=${TELEGRAM_CHANNEL_ID}" \
             -F "audio=@${MP3_FILE}" \
             -F "caption=🎵 YouTube Audio"
+
+      - name: Delete cookies
+        if: always()
+        run: |
+          rm -f youtube_cookies.txt
