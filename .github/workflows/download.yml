@@ -70,7 +70,6 @@ jobs:
             "$VIDEO_URL"
 
       - name: Check MP3
-        id: findmp3
         run: |
           FILE="output/audio.mp3"
 
@@ -84,39 +83,117 @@ jobs:
           echo "MP3 found:"
           ls -lh "$FILE"
 
-          echo "file=$FILE" >> "$GITHUB_OUTPUT"
+          echo "MP3 information:"
+          file "$FILE"
 
       - name: Send MP3 to Telegram
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
         run: |
-          FILE="output/audio.mp3"
+          python3 <<'PY'
+          import os
+          import sys
+          import uuid
+          import mimetypes
+          import urllib.request
+          import urllib.error
 
-          if [ ! -f "$FILE" ]; then
-            echo "MP3 file does not exist: $FILE"
-            ls -lah output
-            exit 1
-          fi
+          token = os.environ["TELEGRAM_BOT_TOKEN"]
+          chat_id = os.environ["TELEGRAM_CHANNEL_ID"]
 
-          chmod 644 "$FILE"
+          file_path = "output/audio.mp3"
 
-          echo "MP3 details:"
-          ls -lh "$FILE"
-          file "$FILE"
+          if not os.path.isfile(file_path):
+              print(f"ERROR: File does not exist: {file_path}")
+              sys.exit(1)
 
-          echo "Sending $FILE to Telegram..."
+          file_size = os.path.getsize(file_path)
 
-          RESPONSE=$(curl -sS \
-            --fail-with-body \
-            -X POST \
-            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendAudio" \
-            -F "chat_id=${TELEGRAM_CHANNEL_ID}" \
-            -F "audio=@${FILE};type=audio/mpeg" \
-            -F "caption=🎵 YouTube Audio")
+          print(f"Uploading: {file_path}")
+          print(f"File size: {file_size / (1024 * 1024):.2f} MB")
 
-          echo "Telegram response:"
-          echo "$RESPONSE"
+          boundary = uuid.uuid4().hex
+          boundary_bytes = boundary.encode()
+
+          def add_field(name, value):
+              return (
+                  b"--" + boundary_bytes + b"\r\n"
+                  + f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode()
+                  + str(value).encode()
+                  + b"\r\n"
+              )
+
+          body_start = b""
+
+          # chat_id
+          body_start += add_field("chat_id", chat_id)
+
+          # caption
+          body_start += add_field("caption", "🎵 YouTube Audio")
+
+          # audio file header
+          filename = os.path.basename(file_path)
+
+          body_start += (
+              b"--" + boundary_bytes + b"\r\n"
+              + f'Content-Disposition: form-data; name="audio"; filename="{filename}"\r\n'.encode()
+              + b"Content-Type: audio/mpeg\r\n\r\n"
+          )
+
+          body_end = (
+              b"\r\n--" + boundary_bytes + b"--\r\n"
+          )
+
+          url = f"https://api.telegram.org/bot{token}/sendAudio"
+
+          print("Connecting to Telegram...")
+          print("Uploading MP3...")
+
+          with open(file_path, "rb") as f:
+              file_data = f.read()
+
+          body = body_start + file_data + body_end
+
+          request = urllib.request.Request(
+              url,
+              data=body,
+              method="POST",
+              headers={
+                  "Content-Type": f"multipart/form-data; boundary={boundary}",
+                  "Content-Length": str(len(body)),
+                  "User-Agent": "GitHub-Actions-YouTube-Audio-Bot"
+              }
+          )
+
+          try:
+              with urllib.request.urlopen(request, timeout=600) as response:
+                  result = response.read().decode("utf-8")
+
+                  print("Telegram response:")
+                  print(result)
+
+                  if '"ok":true' not in result:
+                      print("ERROR: Telegram did not accept the upload.")
+                      sys.exit(1)
+
+                  print("SUCCESS: MP3 sent to Telegram!")
+
+          except urllib.error.HTTPError as e:
+              error_body = e.read().decode("utf-8", errors="replace")
+
+              print("Telegram HTTP error:")
+              print(f"Status: {e.code}")
+              print(error_body)
+
+              sys.exit(1)
+
+          except Exception as e:
+              print("Upload failed:")
+              print(repr(e))
+
+              sys.exit(1)
+          PY
 
       - name: Delete cookies
         if: always()
