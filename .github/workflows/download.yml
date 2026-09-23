@@ -1,0 +1,60 @@
+name: YouTube to Telegram MP3
+
+on:
+  repository_dispatch:
+    types: [youtube_audio]
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install yt-dlp
+        run: |
+          python3 -m pip install --upgrade yt-dlp
+
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Download YouTube audio
+        env:
+          VIDEO_URL: ${{ github.event.client_payload.url }}
+        run: |
+          mkdir -p output
+
+          yt-dlp \
+            --no-playlist \
+            --extract-audio \
+            --audio-format mp3 \
+            --audio-quality 192K \
+            --embed-thumbnail \
+            --add-metadata \
+            --output "output/%(title)s.%(ext)s" \
+            "$VIDEO_URL"
+
+      - name: Find MP3
+        id: findmp3
+        run: |
+          FILE=$(find output -type f -name "*.mp3" | head -n 1)
+
+          if [ -z "$FILE" ]; then
+            echo "No MP3 was created."
+            exit 1
+          fi
+
+          echo "file=$FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Send MP3 to Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          MP3_FILE: ${{ steps.findmp3.outputs.file }}
+        run: |
+          curl -sS \
+            -X POST \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendAudio" \
+            -F "chat_id=${TELEGRAM_CHANNEL_ID}" \
+            -F "audio=@${MP3_FILE}" \
+            -F "caption=🎵 YouTube Audio"
