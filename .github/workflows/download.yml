@@ -212,7 +212,7 @@ jobs:
           FILE="output/audio.mp3"
 
           SIZE_BYTES=$(stat -c%s "$FILE")
-          MAX_BYTES=$((45 * 1024 * 1024))
+          MAX_BYTES=$((100 * 1024 * 1024))
 
           if [ "$SIZE_BYTES" -gt "$MAX_BYTES" ]; then
             echo "ERROR: MP3 is too large."
